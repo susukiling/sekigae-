@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>席替えるーれっと</title>
+<meta name="theme-color" content="#4f46e5">
+<meta name="application-name" content="席替え">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="席替え">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<script>
+  // 画面のちらつき防止：描画前にテーマを決める
+  (function () {
+    var t = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#f3f6fc; --surface:#ffffff; --surface2:#f9fafb; --border:#e5e7eb;
+    --text:#1f2937; --muted:#6b7280; --faint:#d1d5db;
+    --accent:#4f46e5; --accent-h:#4338ca; --accent-soft:#eef2ff;
+    --lock:#f43f5e; --lock-bg:#fff1f2; --ok:#10b981; --ok-bg:#ecfdf5;
+    --board:#065f46; --frame:#b45309; --hatch1:#e5e7eb; --hatch2:#f3f4f6;
+    --shadow:0 1px 3px rgba(0,0,0,.08); color-scheme:light;
+  }
+  :root[data-theme="dark"] {
+    --bg:#0f172a; --surface:#1e293b; --surface2:#172033; --border:#334155;
+    --text:#e5e7eb; --muted:#94a3b8; --faint:#475569;
+    --accent:#818cf8; --accent-h:#6366f1; --accent-soft:#27305a;
+    --lock:#fb7185; --lock-bg:#3b1a26; --ok:#34d399; --ok-bg:#12372f;
+    --board:#0b3d33; --frame:#92400e; --hatch1:#273449; --hatch2:#1e293b;
+    --shadow:0 1px 3px rgba(0,0,0,.5); color-scheme:dark;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'Zen Maru Gothic',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:calc(24px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left)); display:flex; flex-direction:column; align-items:center; user-select:none; transition:background-color .2s,color .2s; }
+  button { font-family:inherit; cursor:pointer; }
+  .ic { width:1em; height:1em; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; vertical-align:-0.125em; flex:none; }
+  .spin { animation:spin 1s linear infinite; } @keyframes spin { to { transform:rotate(360deg); } }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  .wrap { width:100%; max-width:1152px; }
+  .top { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:14px; margin-bottom:10px; }
+  h1 { margin:0; font-size:1.7rem; display:flex; align-items:center; gap:10px; }
+  h1 .ic { color:var(--accent); font-size:1.9rem; }
+  .toolbar { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:8px; box-shadow:var(--shadow); }
+  .sep { width:1px; height:30px; background:var(--border); margin:0 2px; }
+  .btn { display:inline-flex; align-items:center; gap:6px; border:1px solid transparent; border-radius:9px; padding:8px 12px; font-size:.85rem; font-weight:700; color:#fff; background:var(--accent); transition:background-color .15s,transform .1s; }
+  .btn:active { transform:scale(.96); }
+  .btn-primary { background:var(--accent); padding:8px 18px; } .btn-primary:hover { background:var(--accent-h); }
+  .btn-green { background:#059669; } .btn-green:hover { background:#047857; }
+  .btn-amber { background:#d97706; } .btn-amber:hover { background:#b45309; }
+  .btn-blue { background:#2563eb; } .btn-blue:hover { background:#1d4ed8; }
+  .btn-ghost { background:var(--surface2); color:var(--text); border-color:var(--border); } .btn-ghost:hover { background:var(--accent-soft); }
+  .btn-danger { background:var(--lock-bg); color:var(--lock); border-color:var(--lock); }
+  .btn.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn-icon { padding:8px 10px; }
+
+  .status { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; font-size:.75rem; color:var(--muted); margin-bottom:10px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; background:var(--accent-soft); color:var(--accent); border-radius:999px; padding:3px 10px; font-weight:700; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .board { position:relative; overflow:hidden; background:var(--surface); border:2px solid var(--border); border-radius:14px; padding:28px; box-shadow:0 10px 30px rgba(0,0,0,.08); }
+  .side { position:absolute; top:50%; transform:translateY(-50%); writing-mode:vertical-rl; color:var(--faint); font-weight:700; letter-spacing:.3em; display:none; }
+  .side.l { left:6px; } .side.r { right:6px; }
+  @media (min-width:1280px) { .side { display:block; } }
+  .blackboard { width:50%; margin:0 auto 22px; height:40px; background:var(--board); border:4px solid var(--frame); border-radius:3px; display:flex; align-items:center; justify-content:center; color:rgba(255,255,255,.8); font-weight:700; letter-spacing:.4em; font-size:.75rem; box-shadow:inset 0 2px 6px rgba(0,0,0,.35); }
+  .editbar { display:none; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px; margin:0 auto 14px; padding:10px; max-width:640px; background:var(--accent-soft); border:1px dashed var(--accent); border-radius:10px; font-size:.8rem; color:var(--text); }
+  .editbar.show { display:flex; }
+  .editbar .grp { display:inline-flex; align-items:center; gap:6px; }
+
+  .grid { display:grid; gap:12px; max-width:1024px; margin:0 auto; transition:opacity .2s; }
+  .grid.shuffling { opacity:.5; }
+  @media (max-width:640px) { .board { padding:14px; } .grid { gap:6px; } }
+  .desk { aspect-ratio:4/3; position:relative; display:flex; align-items:center; justify-content:center; padding:4px; border-radius:10px; min-width:0; }
+  .seat { background:var(--surface); border:1px solid var(--border); box-shadow:var(--shadow); transition:transform .2s,box-shadow .2s,background-color .3s; touch-action:manipulation; cursor:pointer; }
+  .seat:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,.15); border-color:var(--accent); z-index:5; }
+  .seat.editing { cursor:default; border-style:dashed; border-color:var(--accent); } .seat.editing:hover { transform:none; }
+  .seat.is-locked { border-color:var(--lock); background:var(--lock-bg); }
+  .seat.dragging { opacity:.4; border:2px dashed var(--accent); }
+  .seat.drag-over { border:2px dashed var(--ok); background:var(--ok-bg); transform:scale(1.02); }
+  .empty { border:1px dashed var(--border); background-image:repeating-linear-gradient(45deg,var(--hatch1),var(--hatch1) 10px,var(--hatch2) 10px,var(--hatch2) 20px); color:var(--muted); }
+  .empty > span { opacity:.5; }
+  .name { width:100%; text-align:center; font-weight:700; line-height:1.2; padding:0 4px; word-break:break-word; pointer-events:none; }
+  .fs-xl { font-size:1.25rem; } .fs-lg { font-size:1.1rem; } .fs-sm { font-size:.875rem; } .fs-xs { font-size:.75rem; }
+  @media (max-width:640px) { .fs-xl { font-size:.95rem; } .fs-lg { font-size:.85rem; } .fs-sm { font-size:.72rem; } .fs-xs { font-size:.65rem; } }
+  .corner { position:absolute; top:4px; right:4px; width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:50%; border:1px solid var(--border); background:var(--surface); color:var(--faint); font-size:.8rem; padding:0; z-index:2; transition:transform .15s; }
+  .corner:hover { transform:scale(1.15); }
+  .is-locked .corner.lock { color:var(--lock); border-color:var(--lock); }
+  .corner.danger { color:var(--lock); border-color:var(--lock); }
+  .add { width:70%; height:60%; border-radius:8px; border:2px dashed var(--accent); background:transparent; color:var(--accent); font-size:1.3rem; display:flex; align-items:center; justify-content:center; }
+  .add:hover { background:var(--accent-soft); }
+
+  .unseated { margin-top:18px; padding:12px; border:1px dashed var(--lock); border-radius:10px; background:var(--lock-bg); font-size:.85rem; display:none; }
+  .unseated.show { display:block; }
+  .unseated .tags { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .tag { background:var(--surface); border:1px solid var(--border); border-radius:999px; padding:3px 12px; font-weight:700; }
+  .foot { margin-top:22px; padding-top:14px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:6px; color:var(--muted); font-size:.85rem; }
+  .foot b { color:var(--accent); }
+
+  .modal { position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity .2s; }
+  .modal.open { opacity:1; pointer-events:auto; }
+  .backdrop { position:absolute; inset:0; background:rgba(15,23,42,.55); backdrop-filter:blur(4px); }
+  .sheet { position:relative; width:92%; max-width:440px; max-height:86vh; display:flex; flex-direction:column; background:var(--surface); border-radius:14px; overflow:hidden; box-shadow:0 20px 50px rgba(0,0,0,.35); user-select:text; }
+  .sheet.wide { max-width:520px; }
+  .sh { display:flex; justify-content:space-between; align-items:center; padding:14px 20px; border-bottom:1px solid var(--border); background:var(--surface2); font-weight:700; }
+  .sh h3 { margin:0; font-size:1.05rem; display:flex; align-items:center; gap:8px; }
+  .sb { padding:18px 20px; overflow-y:auto; flex:1; }
+  .sf { display:flex; justify-content:flex-end; gap:8px; padding:12px 20px; border-top:1px solid var(--border); background:var(--surface2); }
+  .x { background:none; border:none; color:var(--muted); font-size:1.1rem; padding:4px; } .x:hover { color:var(--text); }
+  .input { width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); font:inherit; font-size:.9rem; }
+  .input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  textarea.input { height:240px; resize:none; line-height:1.6; }
+  label.l { display:block; font-size:.8rem; font-weight:700; color:var(--muted); margin:0 0 6px; }
+  .field { margin-bottom:14px; }
+  .note { font-size:.78rem; color:var(--muted); margin:0 0 10px; line-height:1.5; }
+  .warn { color:#d97706; }
+  .row { display:flex; gap:8px; }
+  .list { display:flex; flex-direction:column; gap:6px; }
+  .opt { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 10px; border-radius:8px; cursor:pointer; border:1px solid transparent; background:transparent; width:100%; text-align:left; color:var(--text); font:inherit; }
+  .opt:hover { background:var(--surface2); } .opt.cur { background:var(--accent-soft); border-color:var(--accent); cursor:default; }
+  .opt small { color:var(--muted); }
+  .sec { padding:6px 10px; font-size:.72rem; font-weight:700; color:var(--muted); background:var(--surface2); border-radius:6px; margin-top:4px; }
+  .saved { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+  .saved h4 { margin:0; font-size:1rem; } .saved p { margin:4px 0 0; font-size:.75rem; color:var(--muted); }
+  .empty-msg { text-align:center; color:var(--muted); padding:34px 0; font-size:.9rem; border:1px dashed var(--border); border-radius:10px; }
+  .tabs { display:flex; gap:4px; background:var(--surface2); padding:4px; border-radius:10px; margin-bottom:16px; }
+  .tabs button { flex:1; border:none; background:none; padding:8px; border-radius:7px; font-weight:700; color:var(--muted); }
+  .tabs button.on { background:var(--surface); color:var(--accent); box-shadow:var(--shadow); }
+  .err { color:var(--lock); font-size:.8rem; min-height:1.2em; margin:0 0 8px; }
+  .link { background:none; border:none; color:var(--accent); font-size:.78rem; text-decoration:underline; padding:0; }
+
+  #loading { position:fixed; inset:0; z-index:100; display:flex; flex-direction:column; align-items:center; justify-content:center; background:color-mix(in srgb,var(--bg) 85%,transparent); backdrop-filter:blur(4px); transition:opacity .3s; font-weight:700; color:var(--muted); gap:12px; }
+  #loading .ic { font-size:2.4rem; color:var(--accent); }
+  #loading.hide { opacity:0; pointer-events:none; }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translate(-50%,20px); background:#111827; color:#fff; padding:10px 18px; border-radius:999px; font-size:.85rem; font-weight:700; opacity:0; pointer-events:none; transition:all .25s; z-index:200; max-width:90vw; }
+  #toast.show { opacity:1; transform:translate(-50%,0); }
+  body.modal-open { overflow:hidden; }
+
+  @media print {
+    :root, :root[data-theme="dark"] { --bg:#fff; --surface:#fff; --surface2:#fff; --border:#000; --text:#000; --muted:#000; --lock-bg:#fff; --hatch1:#eee; --hatch2:#eee; --board:#065f46; --frame:#b45309; --shadow:none; }
+    .no-print { display:none !important; }
+    body { padding:0; }
+    .board { box-shadow:none; border:none; }
+    .seat { border:1px solid #000; box-shadow:none; break-inside:avoid; }
+    .corner { display:none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- SVGアイコン（絵文字の代わり） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-chair" viewBox="0 0 24 24"><path d="M7 3h10a1 1 0 0 1 1 1v7H6V4a1 1 0 0 1 1-1z"/><path d="M5 11h14v4H5z"/><path d="M7 15v6M17 15v6"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+  <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.6 3.9A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/></symbol>
+  <symbol id="i-print" viewBox="0 0 24 24"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-spinner" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></symbol>
+</svg>
+
+<div id="loading"><i data-ic="spinner" class="spin"></i><span id="loadingText">データを読み込み中...</span></div>
+<div id="toast" role="status"></div>
+
+<div class="wrap">
+  <div class="top no-print">
+    <h1><i data-ic="chair"></i>1年4組 座席表</h1>
+    <div class="toolbar">
+      <button class="btn btn-green" onclick="openNames()"><i data-ic="list"></i>名簿編集</button>
+      <button class="btn btn-ghost" id="editBtn" onclick="toggleEdit()"><i data-ic="layout"></i>席の編集</button>
+      <span class="sep"></span>
+      <button class="btn btn-ghost" onclick="unlockAll()" title="全てのロックを解除"><i data-ic="unlock"></i>全解除</button>
+      <button class="btn btn-primary" onclick="shuffleSeats()"><i data-ic="shuffle"></i>席替え</button>
+      <span class="sep"></span>
+      <button class="btn btn-amber" onclick="openSave()"><i data-ic="save"></i>保存</button>
+      <button class="btn btn-blue" onclick="openData()"><i data-ic="folder"></i>管理・開く</button>
+      <span class="sep"></span>
+      <button class="btn btn-ghost btn-icon" onclick="window.print()" title="印刷" aria-label="印刷"><i data-ic="print"></i></button>
+      <button class="btn btn-ghost btn-icon" onclick="toggleTheme()" id="themeBtn" title="ライト/ダーク切り替え" aria-label="ライト/ダーク切り替え"></button>
+      <span id="authSlot"></span>
+    </div>
+  </div>
+
+  <div class="status no-print" id="statusLine"></div>
+
+  <div class="board">
+    <div class="side l">廊下側</div><div class="side r">窓側</div>
+    <div class="blackboard">黒 板</div>
+
+    <div class="editbar no-print" id="editBar">
+      <span>席をタップして削除、点線の枠をタップして追加できます</span>
+      <span class="grp">行<button class="btn btn-ghost btn-icon" onclick="removeRow()" aria-label="行を減らす"><i data-ic="minus"></i></button><button class="btn btn-ghost btn-icon" onclick="addRow()" aria-label="行を増やす"><i data-ic="plus"></i></button></span>
+      <span class="grp">列<button class="btn btn-ghost btn-icon" onclick="removeCol()" aria-label="列を減らす"><i data-ic="minus"></i></button><button class="btn btn-ghost btn-icon" onclick="addCol()" aria-label="列を増やす"><i data-ic="plus"></i></button></span>
+    </div>
+
+    <div class="grid" id="seatingGrid"></div>
+
+    <div class="unseated no-print" id="unseated">
+      <i data-ic="alert"></i> 席が足りず、まだ座っていない人がいます。席を追加するか、座席を選んで入れ替えてください。
+      <div class="tags" id="unseatedTags"></div>
+    </div>
+
+    <div class="foot">
+      <div>在籍 <b id="studentCount">0</b>名 / 席 <b id="seatCount">0</b></div>
+      <div id="dateInfo"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 座席指定 -->
+<div class="modal" id="seatModal">
+  <div class="backdrop" onclick="closeModal('seatModal')"></div>
+  <div class="sheet">
+    <div class="sh"><h3>座席を指定</h3><button class="x" onclick="closeModal('seatModal')" aria-label="閉じる"><i data-ic="x"></i></button></div>
+    <div class="sb" style="padding-bottom:10px">
+      <label class="l" for="seatNameInput">この席の名前を編集</label>
+      <div class="row"><input class="input" id="seatNameInput" placeholder="名前を入力"><button class="btn" onclick="updateSeatName()">変更</button></div>
+    </div>
+    <div style="padding:0 20px 8px"><div style="position:relative">
+      <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.8rem"><i data-ic="search"></i></span>
+      <input class="input" id="studentSearch" placeholder="名前で検索して入れ替え" style="padding-left:34px" oninput="renderSeatList()">
+    </div></div>
+    <div class="sb list" id="seatList" style="padding-top:4px"></div>
+  </div>
+</div>
+
+<!-- 名簿 -->
+<div class="modal" id="nameModal">
+  <div class="backdrop" onclick="closeModal('nameModal')"></div>
+  <div class="sheet wide">
+    <div class="sh"><h3>名簿の一括編集</h3><button class="x" onclick="closeModal('nameModal')" aria-label="閉じる"><i data-ic="x"></i></button></div>
+    <div class="sb">
+      <p class="note">1行に1人ずつ入力してください。<br><span class="warn"><i data-ic="alert"></i> 保存すると席の形は保ったまま、全員をシャッフルして配置し直します（固定は解除）。</span></p>
+      <textarea class="input" id="nameListInput"></textarea>
+      <div style="text-align:right;margin-top:6px;font-size:.78rem;color:var(--muted)">現在 <b id="inputCount" style="color:var(--accent)">0</b> 名</div>
+    </div>
+    <div class="sf"><button class="btn btn-ghost" onclick="closeModal('nameModal')">キャンセル</button><button class="btn" onclick="saveNames()">保存して配置し直す</button></div>
+  </div>
+</div>
+
+<!-- 名前をつけて保存 -->
+<div class="modal" id="saveModal">
+  <div class="backdrop" onclick="closeModal('saveModal')"></div>
+  <div class="sheet">
+    <div class="sh"><h3><i data-ic="save"></i>現在の状態を保存</h3><button class="x" onclick="closeModal('saveModal')" aria-label="閉じる"><i data-ic="x"></i></button></div>
+    <div class="sb">
+      <label class="l" for="saveName">保存するデータの名前</label>
+      <input class="input" id="saveName" placeholder="例: 1学期中間テスト後" onkeydown="if(event.key==='Enter')doSave()">
+    </div>
+    <div class="sf"><button class="btn btn-ghost" onclick="closeModal('saveModal')">キャンセル</button><button class="btn btn-amber" onclick="doSave()">保存する</button></div>
+  </div>
+</div>
+
+<!-- 保存データ管理 -->
+<div class="modal" id="dataModal">
+  <div class="backdrop" onclick="closeModal('dataModal')"></div>
+  <div class="sheet wide">
+    <div class="sh"><h3><i data-ic="folder"></i>保存済みデータを開く</h3><button class="x" onclick="closeModal('dataModal')" aria-label="閉じる"><i data-ic="x"></i></button></div>
+    <div class="sb list" id="savedList" style="background:var(--bg)"></div>
+    <div class="sf" style="justify-content:space-between">
+      <button class="btn btn-ghost" onclick="openImport()"><i data-ic="upload"></i>旧データを取り込む</button>
+      <button class="btn btn-ghost" onclick="closeModal('dataModal')">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 旧データ取り込み -->
+<div class="modal" id="importModal">
+  <div class="backdrop" onclick="closeModal('importModal')"></div>
+  <div class="sheet wide">
+    <div class="sh"><h3><i data-ic="upload"></i>旧データを取り込む</h3><button class="x" onclick="closeModal('importModal')" aria-label="閉じる"><i data-ic="x"></i></button></div>
+    <div class="sb">
+      <p class="note">GAS側の <code>exportAll</code> で出力したJSONを貼り付けてください。現在の配置と、保存済みデータがすべて取り込まれます。</p>
+      <textarea class="input" id="importText" placeholder='{"current": ..., "layouts": [...]}'></textarea>
+    </div>
+    <div class="sf"><button class="btn btn-ghost" onclick="closeModal('importModal')">キャンセル</button><button class="btn" onclick="doImport()">取り込む</button></div>
+  </div>
+</div>
+
+<!-- ログイン・登録 -->
+<div class="modal" id="authModal">
+  <div class="backdrop" onclick="closeModal('authModal')"></div>
+  <div class="sheet">
+    <div class="sh"><h3><i data-ic="user"></i>アカウント</h3><button class="x" onclick="closeModal('authModal')" aria-label="閉じる"><i data-ic="x"></i></button></div>
+    <form class="sb" onsubmit="submitAuth(event)" novalidate>
+      <div class="tabs">
+        <button type="button" id="tabLogin" class="on" onclick="setAuthMode('login')">ログイン</button>
+        <button type="button" id="tabRegister" onclick="setAuthMode('register')">新規登録</button>
+      </div>
+      <div class="field"><label class="l" for="authEmail">メールアドレス</label><input class="input" id="authEmail" type="email" autocomplete="email" inputmode="email"></div>
+      <div class="field"><label class="l" for="authPass">パスワード（6文字以上）</label><input class="input" id="authPass" type="password" autocomplete="current-password"></div>
+      <div class="field" id="confirmField" style="display:none"><label class="l" for="authPass2">パスワード（確認）</label><input class="input" id="authPass2" type="password" autocomplete="new-password"></div>
+      <p class="err" id="authError" role="alert"></p>
+      <button class="btn btn-primary" id="authSubmit" type="submit" style="width:100%;justify-content:center">ログイン</button>
+      <p style="text-align:center;margin:12px 0 0"><button type="button" class="link" id="resetLink" onclick="resetPassword()">パスワードを忘れた場合</button></p>
+    </form>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+/* ============================================================
+   ★ ここをあなたの Firebase プロジェクトの値に書き換えてください
+   （Firebaseコンソール → プロジェクトの設定 → マイアプリ → Web）
+   未設定のままでも「ログインなし・この端末だけに保存」で動きます
+   ============================================================ */
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT",
+  appId: "YOUR_APP_ID"
+};
+const CLOUD = !firebaseConfig.apiKey.startsWith("YOUR_");
+
+/* ---------- ユーティリティ ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ic = (n, c = '') => `<svg class="ic ${c}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const hydrate = (root = document) => root.querySelectorAll('[data-ic]').forEach(el => { el.outerHTML = ic(el.dataset.ic, el.className); });
+const isName = s => !!s && s !== '空席';
+const MAXC = 10, MAXR = 10;
+
+let toastTimer;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2400); }
+function showLoading(text) { $('loadingText').textContent = text || '読み込み中...'; $('loading').classList.remove('hide'); }
+function hideLoading() { $('loading').classList.add('hide'); }
+function openModal(id) { $(id).classList.add('open'); document.body.classList.add('modal-open'); }
+function closeModal(id) { $(id).classList.remove('open'); if (!document.querySelector('.modal.open')) document.body.classList.remove('modal-open'); }
+
+/* ---------- テーマ ---------- */
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('theme', t);
+  $('themeBtn').innerHTML = ic(t === 'dark' ? 'sun' : 'moon');
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', t === 'dark' ? '#0f172a' : '#4f46e5');
+}
+function toggleTheme() { applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); }
+
+/* ---------- 状態 ---------- */
+let state = { cols: 6, rows: 6, seats: [], unseated: [] };
+let editMode = false, editingSeat = null, authMode = 'login', layoutsCache = [];
+
+function defaultState() {
+  const cols = 6, rows = 6, seats = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++)
+    seats.push({ valid: (c === 2 || c === 3) || r < 5, student: null, locked: false });
+  return { cols, rows, seats, unseated: [] };
+}
+// 旧GAS形式（seatsState / studentNames）も読み込める
+function normalize(d) {
+  const src = d.seatsState || d.seats || [];
+  const cols = d.cols || 6;
+  const rows = d.rows || Math.max(1, Math.ceil(src.length / cols));
+  const seats = [];
+  for (let i = 0; i < cols * rows; i++) {
+    const s = src[i] || {};
+    seats.push({ valid: !!s.valid, student: s.valid ? (s.student || '空席') : null, locked: !!(s.valid && s.locked) });
+  }
+  return { cols, rows, seats, unseated: Array.isArray(d.unseated) ? d.unseated : [] };
+}
+function serialize() {
+  return { cols: state.cols, rows: state.rows, unseated: state.unseated,
+           seatsState: state.seats.map((s, i) => ({ index: i, valid: s.valid, student: s.student, locked: s.locked })) };
+}
+function fillNames(names, doShuffle) {
+  const n = [...names];
+  if (doShuffle) shuffleArray(n);
+  state.seats.forEach(s => { s.locked = false; s.student = s.valid ? (n.length ? n.shift() : '空席') : null; });
+  state.unseated = n;
+}
+function shuffleArray(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+/* ---------- 保存先（ログイン中=クラウド / 未ログイン=この端末） ---------- */
+let app, auth, db, user = null;
+const local = {
+  async loadCurrent() { try { return JSON.parse(localStorage.getItem('seat.current')); } catch { return null; } },
+  async saveCurrent(s) { localStorage.setItem('seat.current', JSON.stringify(s)); },
+  async listLayouts() { try { return JSON.parse(localStorage.getItem('seat.layouts')) || []; } catch { return []; } },
+  async addLayout(name, data, date) {
+    const l = await this.listLayouts(); const item = { id: Date.now().toString() + Math.random().toString(36).slice(2, 6), name, date, data };
+    l.push(item); localStorage.setItem('seat.layouts', JSON.stringify(l)); return item;
+  },
+  async deleteLayout(id) { const l = (await this.listLayouts()).filter(x => x.id !== id); localStorage.setItem('seat.layouts', JSON.stringify(l)); }
+};
+const cloud = {
+  cur() { return doc(db, 'users', user.uid, 'data', 'current'); },
+  col() { return collection(db, 'users', user.uid, 'layouts'); },
+  async loadCurrent() { const s = await getDoc(this.cur()); return s.exists() ? JSON.parse(s.data().json) : null; },
+  async saveCurrent(s) { await setDoc(this.cur(), { json: JSON.stringify(s), updatedAt: Date.now() }); },
+  async listLayouts() {
+    const r = await getDocs(query(this.col(), orderBy('createdAt')));
+    return r.docs.map(d => { const v = d.data(); return { id: d.id, name: v.name, date: v.date, data: JSON.parse(v.json) }; });
+  },
+  async addLayout(name, data, date) {
+    const ref = await addDoc(this.col(), { name, date, json: JSON.stringify(data), createdAt: Date.now() });
+    return { id: ref.id, name, date, data };
+  },
+  async deleteLayout(id) { await deleteDoc(doc(db, 'users', user.uid, 'layouts', id)); }
+};
+const store = () => (user ? cloud : local);
+
+let persistTimer;
+function setSync(k) {
+  const where = user ? 'クラウドに自動保存' : 'この端末に自動保存';
+  const t = { saving: '保存中…', saved: where + 'しました', error: '保存に失敗しました。通信を確認してください' }[k];
+  const el = $('syncState'); if (el) el.textContent = t;
+}
+function persist() {
+  setSync('saving'); clearTimeout(persistTimer);
+  persistTimer = setTimeout(async () => {
+    try { await store().saveCurrent(serialize()); setSync('saved'); } catch (e) { console.error(e); setSync('error'); }
+  }, 500);
+}
+function commit() { render(); persist(); }
+
+/* ---------- 描画 ---------- */
+const fsClass = n => (n.length > 6 ? 'fs-xs' : n.length > 4 ? 'fs-sm' : n.length > 3 ? 'fs-lg' : 'fs-xl');
+
+function render() {
+  const g = $('seatingGrid');
+  g.style.gridTemplateColumns = `repeat(${state.cols}, minmax(0, 1fr))`;
+  g.innerHTML = '';
+  let people = 0, seatN = 0;
+  state.seats.forEach((seat, i) => {
+    const cell = document.createElement('div');
+    if (seat.valid) {
+      seatN++; if (isName(seat.student)) people++;
+      const name = seat.student || '';
+      cell.className = 'desk seat' + (seat.locked ? ' is-locked' : '') + (editMode ? ' editing' : '');
+      cell.dataset.i = i;
+      cell.innerHTML = (editMode
+        ? `<button class="corner danger" data-act="del" data-i="${i}" title="この席を削除" aria-label="この席を削除">${ic('trash')}</button>`
+        : `<button class="corner lock" data-act="lock" data-i="${i}" title="固定" aria-label="固定">${ic(seat.locked ? 'lock' : 'unlock')}</button>`)
+        + `<div class="name ${fsClass(name)}">${esc(name)}</div>`;
+      if (!editMode) {
+        cell.draggable = true;
+        cell.ondragstart = e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', i); cell.classList.add('dragging'); };
+        cell.ondragend = () => cell.classList.remove('dragging');
+        cell.ondragover = e => { e.preventDefault(); cell.classList.add('drag-over'); };
+        cell.ondragleave = () => cell.classList.remove('drag-over');
+        cell.ondrop = e => { e.preventDefault(); cell.classList.remove('drag-over'); const from = parseInt(e.dataTransfer.getData('text/plain')); if (from !== i && state.seats[from]?.valid) swapSeats(from, i); };
+      }
+    } else {
+      cell.className = 'desk empty';
+      cell.innerHTML = editMode
+        ? `<button class="add" data-act="add" data-i="${i}" title="ここに席を追加" aria-label="ここに席を追加">${ic('plus')}</button>`
+        : `<span class="no-print">${ic('x')}</span>`;
+    }
+    g.appendChild(cell);
+  });
+  $('studentCount').textContent = people;
+  $('seatCount').textContent = seatN;
+  const un = $('unseated');
+  un.classList.toggle('show', state.unseated.length > 0);
+  $('unseatedTags').innerHTML = state.unseated.map(n => `<span class="tag">${esc(n)}</span>`).join('');
+}
+
+$('seatingGrid').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (b) { const i = +b.dataset.i; ({ lock: toggleLock, del: deleteSeat, add: addSeat })[b.dataset.act](i); return; }
+  const d = e.target.closest('.seat');
+  if (d && !editMode) openSeat(+d.dataset.i);
+});
+
+/* ---------- 席替え操作 ---------- */
+function shuffleSeats() {
+  const free = state.seats.filter(s => s.valid && !s.locked);
+  const names = shuffleArray(free.map(s => s.student));
+  free.forEach((s, i) => (s.student = names[i]));
+  const g = $('seatingGrid'); g.classList.add('shuffling');
+  setTimeout(() => { render(); g.classList.remove('shuffling'); }, 200);
+  persist();
+}
+function unlockAll() { if (confirm('全ての固定を解除しますか？')) { state.seats.forEach(s => (s.locked = false)); commit(); } }
+function toggleLock(i) { state.seats[i].locked = !state.seats[i].locked; commit(); }
+function swapSeats(a, b) { const t = state.seats[a].student; state.seats[a].student = state.seats[b].student; state.seats[b].student = t; commit(); }
+
+/* ---------- 席の追加・削除 ---------- */
+function toggleEdit() {
+  editMode = !editMode;
+  $('editBar').classList.toggle('show', editMode);
+  $('editBtn').classList.toggle('on', editMode);
+  $('editBtn').innerHTML = ic('layout') + (editMode ? '編集を終える' : '席の編集');
+  render();
+}
+function deleteSeat(i) {
+  const s = state.seats[i];
+  if (isName(s.student)) state.unseated.push(s.student);
+  Object.assign(s, { valid: false, student: null, locked: false });
+  commit();
+}
+function addSeat(i) {
+  Object.assign(state.seats[i], { valid: true, student: state.unseated.length ? state.unseated.shift() : '空席', locked: false });
+  commit();
+}
+const blank = () => ({ valid: false, student: null, locked: false });
+function addRow() {
+  if (state.rows >= MAXR) return toast(`行は${MAXR}までです`);
+  for (let c = 0; c < state.cols; c++) state.seats.push(blank());
+  state.rows++; commit();
+}
+function removeRow() {
+  if (state.rows <= 1) return;
+  const names = state.seats.slice(-state.cols).filter(s => s.valid && isName(s.student)).map(s => s.student);
+  if (names.length && !confirm(`最後の行に ${names.length} 人座っています。削除すると「未配置」になります。続けますか？`)) return;
+  state.seats.length -= state.cols; state.unseated.push(...names); state.rows--; commit();
+}
+function addCol() {
+  if (state.cols >= MAXC) return toast(`列は${MAXC}までです`);
+  const out = [];
+  for (let r = 0; r < state.rows; r++) out.push(...state.seats.slice(r * state.cols, (r + 1) * state.cols), blank());
+  state.seats = out; state.cols++; commit();
+}
+function removeCol() {
+  if (state.cols <= 1) return;
+  const nc = state.cols - 1, out = [], names = [];
+  for (let r = 0; r < state.rows; r++) {
+    const row = state.seats.slice(r * state.cols, (r + 1) * state.cols), last = row[nc];
+    if (last.valid && isName(last.student)) names.push(last.student);
+    out.push(...row.slice(0, nc));
+  }
+  if (names.length && !confirm(`最後の列に ${names.length} 人座っています。削除すると「未配置」になります。続けますか？`)) return;
+  state.seats = out; state.cols = nc; state.unseated.push(...names); commit();
+}
+
+/* ---------- 座席指定モーダル ---------- */
+function openSeat(i) {
+  editingSeat = i;
+  $('seatNameInput').value = state.seats[i].student || '';
+  $('studentSearch').value = '';
+  renderSeatList(); openModal('seatModal');
+}
+function renderSeatList() {
+  const term = $('studentSearch').value.toLowerCase(), box = $('seatList'); box.innerHTML = '';
+  const add = (html, cls, onclick) => { const b = document.createElement('button'); b.className = 'opt ' + cls; b.innerHTML = html; if (onclick) b.onclick = onclick; box.appendChild(b); };
+  state.seats.forEach((s, i) => {
+    if (!s.valid) return;
+    const name = s.student || '（空席）';
+    if (term && !name.toLowerCase().includes(term)) return;
+    const cur = i === editingSeat;
+    add(`<span style="font-weight:700">${esc(name)}${s.locked ? ' ' + ic('lock') : ''}</span><small>${cur ? '現在の席' : '入れ替える'}</small>`, cur ? 'cur' : '', cur ? null : () => { swapSeats(editingSeat, i); closeModal('seatModal'); });
+  });
+  const un = state.unseated.map((n, k) => ({ n, k })).filter(x => !term || x.n.toLowerCase().includes(term));
+  if (un.length) {
+    const h = document.createElement('div'); h.className = 'sec'; h.textContent = '未配置の人'; box.appendChild(h);
+    un.forEach(({ n, k }) => add(`<span style="font-weight:700">${esc(n)}</span><small>この席に座らせる</small>`, '', () => {
+      const seat = state.seats[editingSeat], old = seat.student;
+      seat.student = state.unseated.splice(k, 1)[0]; if (isName(old)) state.unseated.push(old);
+      closeModal('seatModal'); commit();
+    }));
+  }
+}
+function updateSeatName() {
+  const v = $('seatNameInput').value.trim();
+  if (editingSeat === null || !v) return;
+  state.seats[editingSeat].student = v; closeModal('seatModal'); commit();
+}
+
+/* ---------- 名簿 ---------- */
+function allNames() { return [...state.seats.filter(s => s.valid && isName(s.student)).map(s => s.student), ...state.unseated]; }
+function openNames() { $('nameListInput').value = allNames().join('\n'); countNames(); openModal('nameModal'); }
+function countNames() { $('inputCount').textContent = $('nameListInput').value.split('\n').filter(l => l.trim()).length; }
+$('nameListInput').addEventListener('input', countNames);
+function saveNames() {
+  const lines = $('nameListInput').value.split('\n').map(l => l.trim()).filter(Boolean);
+  if (!lines.length) { if (!confirm('名簿が空です。「○番」の初期名簿に戻しますか？')) return; for (let i = 1; i <= 32; i++) lines.push(i + '番'); }
+  fillNames(lines, true); closeModal('nameModal'); commit();
+  if (state.unseated.length) toast(`${state.unseated.length}人が席に座れていません。席を追加してください`);
+}
+
+/* ---------- 名前をつけて保存 / 管理 ---------- */
+function openSave() { $('saveName').value = ''; openModal('saveModal'); setTimeout(() => $('saveName').focus(), 50); }
+async function doSave() {
+  const name = $('saveName').value.trim();
+  if (!name) return toast('名前を入力してください');
+  closeModal('saveModal'); showLoading(`『${name}』を保存中...`);
+  try { await store().addLayout(name, serialize(), new Date().toLocaleString('ja-JP')); toast('保存しました'); }
+  catch (e) { console.error(e); toast('保存に失敗しました'); }
+  hideLoading();
+}
+async function openData() {
+  openModal('dataModal');
+  $('savedList').innerHTML = `<div class="empty-msg">${ic('spinner', 'spin')} 読み込み中...</div>`;
+  try { layoutsCache = await store().listLayouts(); } catch (e) { console.error(e); layoutsCache = []; toast('読み込みに失敗しました'); }
+  renderSaved();
+}
+function renderSaved() {
+  const box = $('savedList');
+  if (!layoutsCache.length) { box.innerHTML = '<div class="empty-msg">保存されたデータはありません</div>'; return; }
+  box.innerHTML = [...layoutsCache].reverse().map(l => `
+    <div class="saved">
+      <div><h4>${esc(l.name)}</h4><p>${ic('clock')} ${esc(l.date)}</p></div>
+      <div class="row">
+        <button class="btn btn-ghost" data-load="${esc(l.id)}">${ic('folder')}開く</button>
+        <button class="btn btn-danger btn-icon" data-del="${esc(l.id)}" title="削除" aria-label="削除">${ic('trash')}</button>
+      </div>
+    </div>`).join('');
+}
+$('savedList').addEventListener('click', async e => {
+  const lb = e.target.closest('[data-load]'), db_ = e.target.closest('[data-del]');
+  if (lb) {
+    const l = layoutsCache.find(x => x.id === lb.dataset.load); if (!l) return;
+    if (!confirm(`『${l.name}』を読み込みますか？\n（現在の配置は上書きされます）`)) return;
+    state = normalize(l.data); closeModal('dataModal'); commit();
+  } else if (db_) {
+    const l = layoutsCache.find(x => x.id === db_.dataset.del); if (!l) return;
+    if (!confirm(`本当に『${l.name}』を削除しますか？\nこの操作は元に戻せません。`)) return;
+    layoutsCache = layoutsCache.filter(x => x.id !== l.id); renderSaved();
+    try { await store().deleteLayout(l.id); } catch (err) { console.error(err); toast('削除に失敗しました'); }
+  }
+});
+
+/* ---------- 旧GASデータの取り込み ---------- */
+function openImport() { $('importText').value = ''; openModal('importModal'); }
+async function doImport() {
+  let obj;
+  try { obj = JSON.parse($('importText').value); } catch { return toast('JSONの形式が正しくありません'); }
+  showLoading('取り込み中...');
+  try {
+    const layouts = Array.isArray(obj.layouts) ? obj.layouts : [];
+    for (const l of layouts) await store().addLayout(l.name || '名称なし', normalizeToSave(l.data), l.date || '');
+    if (obj.current) { state = normalize(obj.current); render(); await store().saveCurrent(serialize()); }
+    toast(`取り込みました（保存データ ${layouts.length}件）`);
+    closeModal('importModal'); closeModal('dataModal');
+  } catch (e) { console.error(e); toast('取り込みに失敗しました'); }
+  hideLoading();
+}
+function normalizeToSave(d) { const n = normalize(d || {}); return { cols: n.cols, rows: n.rows, unseated: n.unseated, seatsState: n.seats }; }
+
+/* ---------- ログイン・登録 ---------- */
+function setAuthMode(m) {
+  authMode = m;
+  $('tabLogin').classList.toggle('on', m === 'login'); $('tabRegister').classList.toggle('on', m === 'register');
+  $('confirmField').style.display = m === 'register' ? 'block' : 'none';
+  $('authSubmit').textContent = m === 'login' ? 'ログイン' : 'アカウントを作成';
+  $('resetLink').style.display = m === 'login' ? 'inline' : 'none';
+  $('authPass').autocomplete = m === 'login' ? 'current-password' : 'new-password';
+  $('authError').textContent = '';
+}
+function openAuth() {
+  if (!CLOUD) return toast('Firebaseの設定がまだです。index.html 上部の firebaseConfig を入力してください');
+  setAuthMode('login'); openModal('authModal');
+}
+const AUTH_MSG = {
+  'auth/invalid-email': 'メールアドレスの形式が正しくありません',
+  'auth/missing-password': 'パスワードを入力してください',
+  'auth/user-not-found': 'このメールアドレスのアカウントがありません',
+  'auth/wrong-password': 'パスワードが違います',
+  'auth/invalid-credential': 'メールアドレスかパスワードが違います',
+  'auth/email-already-in-use': 'このメールアドレスはすでに登録されています',
+  'auth/weak-password': 'パスワードは6文字以上にしてください',
+  'auth/too-many-requests': '試行回数が多すぎます。しばらく待ってからやり直してください',
+  'auth/network-request-failed': '通信に失敗しました。ネットワークを確認してください'
+};
+async function submitAuth(e) {
+  e.preventDefault();
+  const email = $('authEmail').value.trim(), pw = $('authPass').value, err = $('authError');
+  err.textContent = '';
+  if (!email || !pw) { err.textContent = 'メールアドレスとパスワードを入力してください'; return; }
+  if (authMode === 'register' && pw !== $('authPass2').value) { err.textContent = '確認用パスワードが一致しません'; return; }
+  const btn = $('authSubmit'); btn.disabled = true;
+  try {
+    if (authMode === 'login') await signInWithEmailAndPassword(auth, email, pw);
+    else await createUserWithEmailAndPassword(auth, email, pw);
+    closeModal('authModal'); $('authPass').value = ''; $('authPass2').value = '';
+  } catch (ex) { err.textContent = AUTH_MSG[ex.code] || 'エラーが発生しました（' + ex.code + '）'; }
+  btn.disabled = false;
+}
+async function resetPassword() {
+  const email = $('authEmail').value.trim();
+  if (!email) { $('authError').textContent = '上の欄にメールアドレスを入力してください'; return; }
+  try { await sendPasswordResetEmail(auth, email); $('authError').textContent = ''; toast('再設定用のメールを送信しました'); }
+  catch (ex) { $('authError').textContent = AUTH_MSG[ex.code] || 'メールを送信できませんでした'; }
+}
+async function logout() { if (confirm('ログアウトしますか？')) await signOut(auth); }
+
+function renderAuthUI() {
+  $('authSlot').innerHTML = user
+    ? `<button class="btn btn-ghost" onclick="logout()" title="ログアウト">${ic('logout')}ログアウト</button>`
+    : `<button class="btn btn-ghost" onclick="openAuth()">${ic('user')}ログイン</button>`;
+  $('statusLine').innerHTML = user
+    ? `<span class="chip">${ic('user')}${esc(user.email)}</span><span id="syncState"></span>`
+    : `<span>ログインしていません。データはこの端末のブラウザにだけ保存されます。</span><span id="syncState"></span>`;
+  setSync('saved');
+}
+
+/* ---------- 起動・ログイン状態の切り替え ---------- */
+async function loadInitial() {
+  showLoading('データを読み込み中...');
+  let data = null;
+  try { data = await store().loadCurrent(); } catch (e) { console.error(e); toast('読み込みに失敗しました'); }
+  if (!data && user) data = await local.loadCurrent();   // 初ログイン時は端末内のデータを引き継ぐ
+  if (data) state = normalize(data);
+  else { state = defaultState(); fillNames(Array.from({ length: 32 }, (_, i) => `${i + 1}番`), true); }
+  render(); renderAuthUI();
+  if (!data || user) persist();
+  hideLoading();
+}
+
+Object.assign(window, { toggleTheme, shuffleSeats, unlockAll, toggleEdit, addRow, removeRow, addCol, removeCol, openModal, closeModal,
+  openNames, saveNames, openSave, doSave, openData, openImport, doImport, openAuth, setAuthMode, submitAuth, resetPassword, logout,
+  updateSeatName, renderSeatList });
+
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+
+hydrate();
+applyTheme(document.documentElement.dataset.theme);
+const now = new Date(); $('dateInfo').textContent = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`;
+
+if (CLOUD) {
+  app = initializeApp(firebaseConfig); auth = getAuth(app); db = getFirestore(app);
+  onAuthStateChanged(auth, async u => { user = u; await loadInitial(); });
+} else {
+  loadInitial();
+}
+</script>
+</body>
+</html>
