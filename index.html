@@ -20,8 +20,8 @@
     document.documentElement.dataset.theme = t;
   })();
 </script>
-<link rel="preconnect" href="https://script.google.com">
-<link rel="preconnect" href="https://script.googleusercontent.com">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -84,15 +84,6 @@
   .seat { background:var(--surface); border:1px solid var(--border); box-shadow:var(--shadow); transition:transform .2s,box-shadow .2s,background-color .3s; touch-action:manipulation; cursor:pointer; }
   .seat:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,.15); border-color:var(--accent); z-index:5; }
   .seat.editing { cursor:default; border-style:dashed; border-color:var(--accent); } .seat.editing:hover { transform:none; }
-  .seat { -webkit-touch-callout:none; -webkit-user-select:none; }
-  .seat .name { transition:transform .22s cubic-bezier(.2,.8,.2,1); }
-  .seat.pickup { transform:scale(.95); box-shadow:0 0 0 3px var(--accent-soft); }          /* 長押し中の予告 */
-  .seat.slide { z-index:6; }
-  .seat.drag-origin { opacity:.5; border-style:dashed; border-color:var(--accent); background:var(--accent-soft); }
-  .seat.drag-origin .name { visibility:hidden; }
-  .grid.moving .seat:hover { transform:none; }
-  .drag-float { position:fixed !important; left:0; top:0; margin:0; z-index:300; pointer-events:none; opacity:.97; border-color:var(--accent) !important; box-shadow:0 16px 32px rgba(0,0,0,.32) !important; will-change:transform; }
-  .drag-float .corner { display:none; }
   .seat.is-locked { border-color:var(--lock); background:var(--lock-bg); }
   .seat.dragging { opacity:.4; border:2px dashed var(--accent); }
   .seat.drag-over { border:2px dashed var(--ok); background:var(--ok-bg); transform:scale(1.02); }
@@ -198,7 +189,7 @@
 
 <div class="wrap">
   <div class="top no-print">
-    <h1><i data-ic="chair"></i>せきがえAPP</h1>
+    <h1><i data-ic="chair"></i>座席表</h1>
     <div class="toolbar">
       <button class="btn btn-green" onclick="openNames()"><i data-ic="list"></i>名簿編集</button>
       <button class="btn btn-ghost" id="editBtn" onclick="toggleEdit()"><i data-ic="layout"></i>席の編集</button>
@@ -324,20 +315,31 @@
       </div>
       <div class="field"><label class="l" for="authEmail">メールアドレス</label><input class="input" id="authEmail" type="email" autocomplete="email" inputmode="email"></div>
       <div class="field"><label class="l" for="authPass">パスワード（6文字以上）</label><input class="input" id="authPass" type="password" autocomplete="current-password"></div>
-      \1      <div class="field" id="inviteField" style="display:none"><label class="l" for="authInvite">招待コード（配られている場合だけ）</label><input class="input" id="authInvite" autocomplete="off"></div>\n      <p class="err" id="authError" role="alert"></p>
+      <div class="field" id="confirmField" style="display:none"><label class="l" for="authPass2">パスワード（確認）</label><input class="input" id="authPass2" type="password" autocomplete="new-password"></div>
+      <p class="err" id="authError" role="alert"></p>
       <button class="btn btn-primary" id="authSubmit" type="submit" style="width:100%;justify-content:center">ログイン</button>
+      <p style="text-align:center;margin:12px 0 0"><button type="button" class="link" id="resetLink" onclick="resetPassword()">パスワードを忘れた場合</button></p>
     </form>
   </div>
 </div>
 
 <script type="module">
+// Firebaseは重いので、画面を出したあとで読み込む（下の initFirebase）
+let initializeApp, getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail,
+    initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy;
 
 /* ============================================================
-   ★ GASを「ウェブアプリ」として公開したときのURL（…/exec で終わるもの）を貼ってください
+   ★ ここをあなたの Firebase プロジェクトの値に書き換えてください
+   （Firebaseコンソール → プロジェクトの設定 → マイアプリ → Web）
    未設定のままでも「ログインなし・この端末だけに保存」で動きます
    ============================================================ */
-const GAS_URL = "YOUR_GAS_WEB_APP_URL";
-const CLOUD = !GAS_URL.startsWith("YOUR_");
+const firebaseConfig = {
+  apiKey: "AIzaSyDYoeLetLD6ARaVIJS9CvOyBCp2-aWo9ZE",
+  authDomain: "sekigae-app-8e8a7.firebaseapp.com",
+  projectId: "sekigae-app-8e8a7",
+  appId: "1:643823353259:web:20a261afd98436a299e6ee"
+};
+const CLOUD = !firebaseConfig.apiKey.startsWith("YOUR_");
 
 /* ---------- ユーティリティ ---------- */
 const $ = id => document.getElementById(id);
@@ -398,7 +400,7 @@ function fillNames(names, doShuffle) {
 function shuffleArray(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
 /* ---------- 保存先（ログイン中=クラウド / 未ログイン=この端末） ---------- */
-let user = null;
+let app, auth, db, user = null;
 const local = {
   async loadCurrent() { try { return JSON.parse(localStorage.getItem('seat.current')); } catch { return null; } },
   async saveCurrent(s) { localStorage.setItem('seat.current', JSON.stringify(s)); },
@@ -409,39 +411,28 @@ const local = {
   },
   async deleteLayout(id) { const l = (await this.listLayouts()).filter(x => x.id !== id); localStorage.setItem('seat.layouts', JSON.stringify(l)); }
 };
-function forceLogout() {
-  ['seat.token', 'seat.email', 'seat.lastUid'].forEach(k => localStorage.removeItem(k));
-  user = null; toast('ログインの有効期限が切れました。もう一度ログインしてください'); renderAuthUI();
-}
-async function api(action, payload = {}) {
-  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 25000);
-  let res;
-  try {
-    // text/plain にすると事前確認(preflight)が不要になり、GASでもCORSで通る
-    res = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, signal: ctl.signal,
-                                 body: JSON.stringify({ action, token: localStorage.getItem('seat.token') || '', ...payload }) });
-  } catch (e) { throw new Error('通信できませんでした。ネットワークを確認してください'); }
-  finally { clearTimeout(timer); }
-  let r; try { r = await res.json(); } catch { throw new Error('サーバーの応答が正しくありません。GASのURLと公開設定を確認してください'); }
-  if (r.error) { const err = new Error(r.error); if (r.code === 'unauthorized') { err.unauth = true; forceLogout(); } throw err; }
-  return r;
-}
 const cloud = {
-  async loadCurrentMeta() { const r = await api('loadCurrent'); return r.data ? { data: r.data, at: r.at || 0 } : null; },
-  async saveCurrent(s, at = Date.now()) { await api('saveCurrent', { data: s, at }); },
-  async listLayouts() { return (await api('listLayouts')).layouts; },
-  async addLayout(name, data, date, createdAt = Date.now(), id = null) {
-    id = id || 'l' + createdAt + Math.random().toString(36).slice(2, 6);
-    await api('addLayout', { id, name, data, date, createdAt });
-    return { id, name, date, data };
+  cur() { return doc(db, 'users', user.uid, 'data', 'current'); },
+  col() { return collection(db, 'users', user.uid, 'layouts'); },
+  async loadCurrentMeta() { const s = await getDoc(this.cur()); return s.exists() ? { data: JSON.parse(s.data().json), at: s.data().updatedAt || 0 } : null; },
+  async saveCurrent(s, at = Date.now()) { await setDoc(this.cur(), { json: JSON.stringify(s), updatedAt: at }); },
+  async listLayouts() {
+    const r = await getDocs(query(this.col(), orderBy('createdAt')));
+    return r.docs.map(d => { const v = d.data(); return { id: d.id, name: v.name, date: v.date, data: JSON.parse(v.json) }; });
   },
-  async deleteLayout(id) { await api('deleteLayout', { id }); }
+  async addLayout(name, data, date, createdAt = Date.now(), id = null) {
+    const body = { name, date, json: JSON.stringify(data), createdAt };
+    if (id) { await setDoc(doc(db, 'users', user.uid, 'layouts', id), body); return { id, name, date, data }; }
+    const ref = await addDoc(this.col(), body);
+    return { id: ref.id, name, date, data };
+  },
+  async deleteLayout(id) { await deleteDoc(doc(db, 'users', user.uid, 'layouts', id)); }
 };
 const store = () => (user ? cloud : local);
 
 let persistTimer, rev = 0, blocked = false, authReady = true;
 const lastUid = localStorage.getItem('seat.lastUid');
-authReady = true;
+authReady = !CLOUD || !lastUid;
 const ck = (uid, k) => `seat.c.${uid}.${k}`;
 const cacheGet = (uid, k) => { try { return JSON.parse(localStorage.getItem(ck(uid, k))); } catch { return null; } };
 const cacheSet = (uid, k, v) => { try { localStorage.setItem(ck(uid, k), JSON.stringify(v)); } catch {} };
@@ -483,6 +474,14 @@ function render() {
         ? `<button class="corner danger" data-act="del" data-i="${i}" title="この席を削除" aria-label="この席を削除">${ic('trash')}</button>`
         : `<button class="corner lock" data-act="lock" data-i="${i}" title="固定" aria-label="固定">${ic(seat.locked ? 'lock' : 'unlock')}</button>`)
         + `<div class="name ${fsClass(name)}">${esc(name)}</div>`;
+      if (!editMode) {
+        cell.draggable = true;
+        cell.ondragstart = e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', i); cell.classList.add('dragging'); };
+        cell.ondragend = () => cell.classList.remove('dragging');
+        cell.ondragover = e => { e.preventDefault(); cell.classList.add('drag-over'); };
+        cell.ondragleave = () => cell.classList.remove('drag-over');
+        cell.ondrop = e => { e.preventDefault(); cell.classList.remove('drag-over'); const from = parseInt(e.dataTransfer.getData('text/plain')); if (from !== i && state.seats[from]?.valid) swapSeats(from, i); };
+      }
     } else {
       cell.className = 'desk empty';
       cell.innerHTML = editMode
@@ -499,96 +498,11 @@ function render() {
 }
 
 $('seatingGrid').addEventListener('click', e => {
-  if (suppressClick) return;                       // 持ち上げ・ドラッグ直後のタップは無視
   const b = e.target.closest('[data-act]');
   if (b) { const i = +b.dataset.i; ({ lock: toggleLock, del: deleteSeat, add: addSeat })[b.dataset.act](i); return; }
   const d = e.target.closest('.seat');
   if (d && !editMode) openSeat(+d.dataset.i);
 });
-
-/* ---------- 席のドラッグ移動 ----------
-   指：長押しで持ち上げ → 指に追従 → 他の席の名前がスッと場所をあける → 離して入れ替え
-   マウス：そのままドラッグ。短くタップすると従来どおり席の指定画面が開く */
-let drag = null, press = null, suppressClick = false;
-const LONG_MS = 260, MOVE_PX = 8, HIT_PAD = 6;
-
-$('seatingGrid').addEventListener('pointerdown', e => {
-  if (editMode || drag || press || e.button > 0) return;
-  const cell = e.target.closest('.seat');
-  if (!cell || e.target.closest('[data-act]')) return;
-  press = { id: e.pointerId, cell, x: e.clientX, y: e.clientY, cx: e.clientX, cy: e.clientY, type: e.pointerType, timer: null };
-  if (e.pointerType !== 'mouse') {
-    cell.classList.add('pickup');
-    press.timer = setTimeout(() => { if (press) beginDrag(press.cx, press.cy); }, LONG_MS);
-  }
-});
-window.addEventListener('pointermove', e => {
-  if (drag) { if (e.pointerId === drag.id) updateDrag(e.clientX, e.clientY); return; }
-  if (!press || e.pointerId !== press.id) return;
-  press.cx = e.clientX; press.cy = e.clientY;
-  if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > MOVE_PX) {
-    if (press.type === 'mouse') beginDrag(e.clientX, e.clientY);   // マウスは動かしたらすぐ開始
-    else cancelPress();                                            // 指は先にスクロール優先
-  }
-});
-window.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.id) endDrag(false); else if (press && e.pointerId === press.id) cancelPress(); });
-window.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.id) endDrag(true); else cancelPress(); });
-window.addEventListener('touchmove', e => { if (drag) e.preventDefault(); }, { passive: false });   // ドラッグ中は画面をスクロールさせない
-
-function cancelPress() {
-  if (!press) return;
-  clearTimeout(press.timer); press.cell.classList.remove('pickup'); press = null;
-}
-function beginDrag(x, y) {
-  const cell = press.cell, id = press.id;
-  cancelPress();
-  const grid = $('seatingGrid'), els = new Map(), rects = new Map();
-  grid.querySelectorAll('.seat').forEach(c => { const i = +c.dataset.i; els.set(i, c); rects.set(i, c.getBoundingClientRect()); });
-  const from = +cell.dataset.i, r0 = rects.get(from);
-  const clone = cell.cloneNode(true);
-  clone.classList.add('drag-float');
-  Object.assign(clone.style, { width: r0.width + 'px', height: r0.height + 'px', transition: 'none' });
-  document.body.appendChild(clone);
-  cell.classList.add('drag-origin'); grid.classList.add('moving');
-  drag = { id, from, els, rects, clone, over: null, ox: x - r0.left, oy: y - r0.top, ending: false };
-  suppressClick = true;
-  if (navigator.vibrate) navigator.vibrate(12);
-  updateDrag(x, y);
-}
-function updateDrag(x, y) {
-  const d = drag; if (!d || d.ending) return;
-  d.clone.style.transform = `translate(${x - d.ox}px, ${y - d.oy}px) scale(1.07) rotate(-2deg)`;
-  let hit = null;
-  for (const [i, r] of d.rects) {
-    if (i !== d.from && x >= r.left - HIT_PAD && x <= r.right + HIT_PAD && y >= r.top - HIT_PAD && y <= r.bottom + HIT_PAD) { hit = i; break; }
-  }
-  if (hit === d.over) return;
-  if (d.over !== null) slideBack(d.over);
-  if (hit !== null) {                                   // 重なった席の名前が、持ち上げた席の場所へ移る
-    const t = d.rects.get(hit), o = d.rects.get(d.from), cell = d.els.get(hit);
-    cell.classList.add('slide');
-    cell.querySelector('.name').style.transform = `translate(${o.left - t.left}px, ${o.top - t.top}px)`;
-  }
-  d.over = hit;
-}
-function slideBack(i) {
-  const c = drag.els.get(i); if (!c) return;
-  const n = c.querySelector('.name'); if (n) n.style.transform = '';
-  c.classList.remove('slide');
-}
-function endDrag(cancelled) {
-  const d = drag; if (!d || d.ending) return;
-  d.ending = true;
-  const target = cancelled ? null : d.over;
-  const dest = d.rects.get(target !== null ? target : d.from);
-  d.clone.style.transition = 'transform .2s cubic-bezier(.2,.8,.2,1)';          // 置く場所へすっと収まる
-  d.clone.style.transform = `translate(${dest.left}px, ${dest.top}px)`;
-  setTimeout(() => {
-    d.clone.remove(); $('seatingGrid').classList.remove('moving'); drag = null;
-    if (target !== null) swapSeats(d.from, target); else render();
-    setTimeout(() => { suppressClick = false; }, 60);
-  }, 210);
-}
 
 /* ---------- 席替え操作 ---------- */
 function shuffleSeats() {
@@ -795,37 +709,48 @@ function setAuthMode(m) {
   authMode = m;
   $('tabLogin').classList.toggle('on', m === 'login'); $('tabRegister').classList.toggle('on', m === 'register');
   $('confirmField').style.display = m === 'register' ? 'block' : 'none';
-  $('inviteField').style.display = m === 'register' ? 'block' : 'none';
   $('authSubmit').textContent = m === 'login' ? 'ログイン' : 'アカウントを作成';
+  $('resetLink').style.display = m === 'login' ? 'inline' : 'none';
   $('authPass').autocomplete = m === 'login' ? 'current-password' : 'new-password';
   $('authError').textContent = '';
 }
 function openAuth() {
-  if (!CLOUD) return toast('GASのURLがまだです。index.html 上部の GAS_URL を入力してください');
-  setAuthMode('login'); openModal('authModal');
+  if (!CLOUD) return toast('Firebaseの設定がまだです。index.html 上部の firebaseConfig を入力してください');
+  setAuthMode('login'); openModal('authModal'); initFirebase().catch(() => {});   // 開いている間に先読み
 }
+const AUTH_MSG = {
+  'auth/invalid-email': 'メールアドレスの形式が正しくありません',
+  'auth/missing-password': 'パスワードを入力してください',
+  'auth/user-not-found': 'このメールアドレスのアカウントがありません',
+  'auth/wrong-password': 'パスワードが違います',
+  'auth/invalid-credential': 'メールアドレスかパスワードが違います',
+  'auth/email-already-in-use': 'このメールアドレスはすでに登録されています',
+  'auth/weak-password': 'パスワードは6文字以上にしてください',
+  'auth/too-many-requests': '試行回数が多すぎます。しばらく待ってからやり直してください',
+  'auth/network-request-failed': '通信に失敗しました。ネットワークを確認してください'
+};
 async function submitAuth(e) {
   e.preventDefault();
   const email = $('authEmail').value.trim(), pw = $('authPass').value, err = $('authError');
   err.textContent = '';
   if (!email || !pw) { err.textContent = 'メールアドレスとパスワードを入力してください'; return; }
   if (authMode === 'register' && pw !== $('authPass2').value) { err.textContent = '確認用パスワードが一致しません'; return; }
-  const btn = $('authSubmit'); btn.disabled = true; btn.textContent = '通信中…';
+  const btn = $('authSubmit'); btn.disabled = true;
   try {
-    const r = await api(authMode === 'login' ? 'login' : 'register', { email, password: pw, invite: $('authInvite').value.trim() });
-    localStorage.setItem('seat.token', r.token); localStorage.setItem('seat.email', r.email); localStorage.setItem('seat.lastUid', r.email);
-    user = { uid: r.email, email: r.email };
+    await initFirebase();
+    if (authMode === 'login') await signInWithEmailAndPassword(auth, email, pw);
+    else await createUserWithEmailAndPassword(auth, email, pw);
     closeModal('authModal'); $('authPass').value = ''; $('authPass2').value = '';
-    await loadInitial(false);
-  } catch (ex) { err.textContent = ex.message; }
-  btn.disabled = false; setAuthMode(authMode);
+  } catch (ex) { err.textContent = AUTH_MSG[ex.code] || (ex.code ? 'エラーが発生しました（' + ex.code + '）' : 'Firebaseを読み込めませんでした。通信を確認してください'); }
+  btn.disabled = false;
 }
-async function logout() {
-  if (!confirm('ログアウトしますか？')) return;
-  api('logout').catch(() => {});
-  ['seat.token', 'seat.email', 'seat.lastUid'].forEach(k => localStorage.removeItem(k));
-  user = null; await loadInitial();
+async function resetPassword() {
+  const email = $('authEmail').value.trim();
+  if (!email) { $('authError').textContent = '上の欄にメールアドレスを入力してください'; return; }
+  try { await initFirebase(); await sendPasswordResetEmail(auth, email); $('authError').textContent = ''; toast('再設定用のメールを送信しました'); }
+  catch (ex) { $('authError').textContent = AUTH_MSG[ex.code] || 'メールを送信できませんでした'; }
 }
+async function logout() { if (confirm('ログアウトしますか？')) await signOut(auth); }
 
 function renderAuthUI() {
   $('authSlot').innerHTML = user
@@ -851,8 +776,7 @@ async function loadInitial(fromCache) {
   render(); renderAuthUI();
   if (cached || fromCache) hideLoading();                        // 控えがあれば即表示して裏で同期
   let remote = null, failed = false;
-  try { remote = await cloud.loadCurrentMeta(); } catch (e) { console.error(e); if (!e.unauth) { failed = true; toast(e.message + '（端末内のデータを表示しています）'); } }
-  if (!user) { loadInitial(); return; }
+  try { remote = await cloud.loadCurrentMeta(); } catch (e) { console.error(e); failed = true; toast('サーバーに接続できません。端末内のデータを表示しています'); }
   const c2 = cacheGet(uid, 'cur'), localAt = c2 ? c2.at : 0;     // 読み込み中に操作があれば最新が入っている
   if (failed) {
     if (!c2) { blocked = true; defaultFill(); render(); setSync('error'); hideLoading(); toast('読み込めませんでした。再読み込みしてください'); return; }
@@ -867,7 +791,7 @@ async function loadInitial(fromCache) {
 }
 
 Object.assign(window, { toggleTheme, shuffleSeats, unlockAll, toggleEdit, addRow, removeRow, addCol, removeCol, openModal, closeModal,
-  openNames, saveNames, openSave, doSave, openData, openImport, doImport, openAuth, setAuthMode, submitAuth, logout,
+  openNames, saveNames, openSave, doSave, openData, openImport, doImport, openAuth, setAuthMode, submitAuth, resetPassword, logout,
   updateSeatName, renderSeatList });
 
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
@@ -876,10 +800,43 @@ hydrate();
 applyTheme(document.documentElement.dataset.theme);
 const now = new Date(); $('dateInfo').textContent = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`;
 
-// 前回ログインしていれば、その状態で即スタート（有効かどうかは裏の同期で確認）
-const tok = localStorage.getItem('seat.token'), em = (localStorage.getItem('seat.email') || '').toLowerCase();
-if (CLOUD && tok && em) user = { uid: em, email: em };
-loadInitial(false);
+let booted = false, guestShown = false, fbPromise = null;
+function initFirebase() {
+  if (fbPromise) return fbPromise;
+  fbPromise = (async () => {
+    const base = 'https://www.gstatic.com/firebasejs/10.14.1/';
+    const [a, au, fs] = await Promise.all([import(base + 'firebase-app.js'), import(base + 'firebase-auth.js'), import(base + 'firebase-firestore.js')]);
+    ({ initializeApp } = a);
+    ({ getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } = au);
+    ({ initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } = fs);
+    app = initializeApp(firebaseConfig); auth = getAuth(app);
+    db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+    onAuthStateChanged(auth, async u => {
+      if (!u && !user && guestShown) { authReady = true; return; }   // 未ログインで表示済み：そのまま
+      user = u; authReady = true;
+      if (u) localStorage.setItem('seat.lastUid', u.uid); else localStorage.removeItem('seat.lastUid');
+      const fc = booted && !!u && u.uid === lastUid; booted = false;
+      await loadInitial(fc);
+    });
+  })().catch(e => { fbPromise = null; throw e; });
+  return fbPromise;
+}
+function fbFailed(e) {
+  console.error(e); toast('Firebaseを読み込めませんでした。通信を確認してください');
+  if (!guestShown && !booted) { authReady = true; guestShown = true; loadInitial(); }
+  hideLoading();
+}
+
+const cachedBoot = CLOUD && lastUid ? cacheGet(lastUid, 'cur') : null;
+if (cachedBoot) {                                  // ログイン済み：前回のデータを即表示 → 裏でFirebase
+  state = normalize(cachedBoot.data); render(); hideLoading(); booted = true;
+  initFirebase().catch(fbFailed);
+} else if (CLOUD && lastUid) {                     // ログイン済みだが控えなし：サーバーから取得
+  initFirebase().catch(fbFailed);
+} else {                                           // 未ログイン：すぐ表示。Firebaseは手が空いてから読み込む
+  guestShown = true; loadInitial();
+  if (CLOUD) (window.requestIdleCallback ? f => requestIdleCallback(f, { timeout: 4000 }) : f => setTimeout(f, 1500))(() => initFirebase().catch(() => {}));
+}
 </script>
 </body>
 </html>
