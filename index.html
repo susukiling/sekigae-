@@ -20,6 +20,11 @@
     document.documentElement.dataset.theme = t;
   })();
 </script>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js">
+<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -294,6 +299,7 @@
     <div class="sh"><h3><i data-ic="upload"></i>旧データを取り込む</h3><button class="x" onclick="closeModal('importModal')" aria-label="閉じる"><i data-ic="x"></i></button></div>
     <div class="sb">
       <p class="note">GAS側の <code>exportAll</code> で出力したJSONを貼り付けてください。現在の配置と、保存済みデータがすべて取り込まれます。</p>
+      <input type="file" id="importFile" accept=".json,.txt,application/json,text/plain" class="input" style="margin-bottom:10px">
       <textarea class="input" id="importText" placeholder='{"current": ..., "layouts": [...]}'></textarea>
     </div>
     <div class="sf"><button class="btn btn-ghost" onclick="closeModal('importModal')">キャンセル</button><button class="btn" onclick="doImport()">取り込む</button></div>
@@ -323,7 +329,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 /* ============================================================
    ★ ここをあなたの Firebase プロジェクトの値に書き換えてください
@@ -331,10 +337,10 @@ import { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteD
    未設定のままでも「ログインなし・この端末だけに保存」で動きます
    ============================================================ */
 const firebaseConfig = {
-  apiKey: "AIzaSyDYoeLetLD6ARaVIJS9CvOyBCp2-aWo9ZE",
-  authDomain: "sekigae-app-8e8a7.firebaseapp.com",
-  projectId: "643823353259",
-  appId: "1:643823353259:web:20a261afd98436a299e6ee"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT",
+  appId: "YOUR_APP_ID"
 };
 const CLOUD = !firebaseConfig.apiKey.startsWith("YOUR_");
 
@@ -411,31 +417,41 @@ const local = {
 const cloud = {
   cur() { return doc(db, 'users', user.uid, 'data', 'current'); },
   col() { return collection(db, 'users', user.uid, 'layouts'); },
-  async loadCurrent() { const s = await getDoc(this.cur()); return s.exists() ? JSON.parse(s.data().json) : null; },
-  async saveCurrent(s) { await setDoc(this.cur(), { json: JSON.stringify(s), updatedAt: Date.now() }); },
+  async loadCurrentMeta() { const s = await getDoc(this.cur()); return s.exists() ? { data: JSON.parse(s.data().json), at: s.data().updatedAt || 0 } : null; },
+  async saveCurrent(s, at = Date.now()) { await setDoc(this.cur(), { json: JSON.stringify(s), updatedAt: at }); },
   async listLayouts() {
     const r = await getDocs(query(this.col(), orderBy('createdAt')));
     return r.docs.map(d => { const v = d.data(); return { id: d.id, name: v.name, date: v.date, data: JSON.parse(v.json) }; });
   },
-  async addLayout(name, data, date) {
-    const ref = await addDoc(this.col(), { name, date, json: JSON.stringify(data), createdAt: Date.now() });
+  async addLayout(name, data, date, createdAt = Date.now()) {
+    const ref = await addDoc(this.col(), { name, date, json: JSON.stringify(data), createdAt });
     return { id: ref.id, name, date, data };
   },
   async deleteLayout(id) { await deleteDoc(doc(db, 'users', user.uid, 'layouts', id)); }
 };
 const store = () => (user ? cloud : local);
 
-let persistTimer;
+let persistTimer, rev = 0, blocked = false, authReady = !CLOUD;
+const lastUid = localStorage.getItem('seat.lastUid');
+const ck = (uid, k) => `seat.c.${uid}.${k}`;
+const cacheGet = (uid, k) => { try { return JSON.parse(localStorage.getItem(ck(uid, k))); } catch { return null; } };
+const cacheSet = (uid, k, v) => { try { localStorage.setItem(ck(uid, k), JSON.stringify(v)); } catch {} };
+const curUid = () => (user ? user.uid : (!authReady ? lastUid : null));
 function setSync(k) {
   const where = user ? 'クラウドに自動保存' : 'この端末に自動保存';
   const t = { saving: '保存中…', saved: where + 'しました', error: '保存に失敗しました。通信を確認してください' }[k];
   const el = $('syncState'); if (el) el.textContent = t;
 }
 function persist() {
-  setSync('saving'); clearTimeout(persistTimer);
+  if (blocked) { setSync('error'); return; }
+  rev++;
+  const at = Date.now(), snap = serialize(), uid = curUid();
+  if (uid) cacheSet(uid, 'cur', { data: snap, at });          // ① 端末に即保存（待ち時間ゼロ）
+  if (!user) { if (authReady) { local.saveCurrent(snap); setSync('saved'); } return; }
+  setSync('saving'); clearTimeout(persistTimer);               // ② クラウドは操作が落ち着いてからまとめて
   persistTimer = setTimeout(async () => {
-    try { await store().saveCurrent(serialize()); setSync('saved'); } catch (e) { console.error(e); setSync('error'); }
-  }, 500);
+    try { await cloud.saveCurrent(snap, at); setSync('saved'); } catch (e) { console.error(e); setSync('error'); }
+  }, 800);
 }
 function commit() { render(); persist(); }
 
@@ -599,15 +615,20 @@ function openSave() { $('saveName').value = ''; openModal('saveModal'); setTimeo
 async function doSave() {
   const name = $('saveName').value.trim();
   if (!name) return toast('名前を入力してください');
-  closeModal('saveModal'); showLoading(`『${name}』を保存中...`);
-  try { await store().addLayout(name, serialize(), new Date().toLocaleString('ja-JP')); toast('保存しました'); }
-  catch (e) { console.error(e); toast('保存に失敗しました'); }
-  hideLoading();
+  closeModal('saveModal'); toast('保存中…');                   // 画面は止めない
+  try {
+    const item = await store().addLayout(name, serialize(), new Date().toLocaleString('ja-JP'));
+    if (user) { const l = cacheGet(user.uid, 'layouts'); if (l) { l.push(item); cacheSet(user.uid, 'layouts', l); } }
+    toast('保存しました');
+  } catch (e) { console.error(e); toast('保存に失敗しました。通信を確認してください'); }
 }
 async function openData() {
   openModal('dataModal');
-  $('savedList').innerHTML = `<div class="empty-msg">${ic('spinner', 'spin')} 読み込み中...</div>`;
-  try { layoutsCache = await store().listLayouts(); } catch (e) { console.error(e); layoutsCache = []; toast('読み込みに失敗しました'); }
+  const uid = user ? user.uid : null, cached = uid ? cacheGet(uid, 'layouts') : null;
+  if (cached) { layoutsCache = cached; renderSaved(); }          // 前回の一覧をまず表示
+  else $('savedList').innerHTML = `<div class="empty-msg">${ic('spinner', 'spin')} 読み込み中...</div>`;
+  try { layoutsCache = await store().listLayouts(); if (uid) cacheSet(uid, 'layouts', layoutsCache); }
+  catch (e) { console.error(e); if (!cached) layoutsCache = []; toast('最新の一覧を取得できませんでした'); }
   renderSaved();
 }
 function renderSaved() {
@@ -631,21 +652,24 @@ $('savedList').addEventListener('click', async e => {
   } else if (db_) {
     const l = layoutsCache.find(x => x.id === db_.dataset.del); if (!l) return;
     if (!confirm(`本当に『${l.name}』を削除しますか？\nこの操作は元に戻せません。`)) return;
-    layoutsCache = layoutsCache.filter(x => x.id !== l.id); renderSaved();
+    layoutsCache = layoutsCache.filter(x => x.id !== l.id); renderSaved(); if (user) cacheSet(user.uid, 'layouts', layoutsCache);
     try { await store().deleteLayout(l.id); } catch (err) { console.error(err); toast('削除に失敗しました'); }
   }
 });
 
 /* ---------- 旧GASデータの取り込み ---------- */
-function openImport() { $('importText').value = ''; openModal('importModal'); }
+function openImport() { $('importText').value = ''; $('importFile').value = ''; openModal('importModal'); }
+$('importFile').addEventListener('change', async e => { const f = e.target.files[0]; if (f) $('importText').value = await f.text(); });
 async function doImport() {
   let obj;
-  try { obj = JSON.parse($('importText').value); } catch { return toast('JSONの形式が正しくありません'); }
+  try { obj = JSON.parse($('importText').value); } catch { return toast('JSONが途中で切れているか、形式が正しくありません'); }
   showLoading('取り込み中...');
   try {
-    const layouts = Array.isArray(obj.layouts) ? obj.layouts : [];
-    for (const l of layouts) await store().addLayout(l.name || '名称なし', normalizeToSave(l.data), l.date || '');
-    if (obj.current) { state = normalize(obj.current); render(); await store().saveCurrent(serialize()); }
+    const layouts = Array.isArray(obj.layouts) ? obj.layouts : [], base = Date.now();
+    if (user) await Promise.all(layouts.map((l, i) => cloud.addLayout(l.name || '名称なし', normalizeToSave(l.data), l.date || '', base + i)));
+    else for (const l of layouts) await local.addLayout(l.name || '名称なし', normalizeToSave(l.data), l.date || '');
+    if (user) localStorage.removeItem(ck(user.uid, 'layouts'));
+    if (obj.current) { state = normalize(obj.current); commit(); }
     toast(`取り込みました（保存データ ${layouts.length}件）`);
     closeModal('importModal'); closeModal('dataModal');
   } catch (e) { console.error(e); toast('取り込みに失敗しました'); }
@@ -711,16 +735,31 @@ function renderAuthUI() {
 }
 
 /* ---------- 起動・ログイン状態の切り替え ---------- */
-async function loadInitial() {
-  showLoading('データを読み込み中...');
-  let data = null;
-  try { data = await store().loadCurrent(); } catch (e) { console.error(e); toast('読み込みに失敗しました'); }
-  if (!data && user) data = await local.loadCurrent();   // 初ログイン時は端末内のデータを引き継ぐ
-  if (data) state = normalize(data);
-  else { state = defaultState(); fillNames(Array.from({ length: 32 }, (_, i) => `${i + 1}番`), true); }
+async function loadInitial(fromCache) {
+  blocked = false;
+  const defaultFill = () => { state = defaultState(); fillNames(Array.from({ length: 32 }, (_, i) => `${i + 1}番`), true); };
+  if (!user) {                                                   // 未ログイン：端末内のデータ
+    let data = null; try { data = await local.loadCurrent(); } catch {}
+    if (data) state = normalize(data); else defaultFill();
+    render(); renderAuthUI(); if (!data) persist(); hideLoading(); return;
+  }
+  const uid = user.uid, cached = cacheGet(uid, 'cur');
+  if (!fromCache) { if (cached) state = normalize(cached.data); else showLoading('データを読み込み中...'); }
   render(); renderAuthUI();
-  if (!data || user) persist();
-  hideLoading();
+  if (cached || fromCache) hideLoading();                        // 控えがあれば即表示して裏で同期
+  let remote = null, failed = false;
+  try { remote = await cloud.loadCurrentMeta(); } catch (e) { console.error(e); failed = true; toast('サーバーに接続できません。端末内のデータを表示しています'); }
+  const c2 = cacheGet(uid, 'cur'), localAt = c2 ? c2.at : 0;     // 読み込み中に操作があれば最新が入っている
+  if (failed) {
+    if (!c2) { blocked = true; defaultFill(); render(); setSync('error'); hideLoading(); toast('読み込めませんでした。再読み込みしてください'); return; }
+  } else if (!remote && !c2) {                                    // 初ログイン：端末内のデータを引き継ぐ
+    let g = null; try { g = await local.loadCurrent(); } catch {}
+    if (g) state = normalize(g); else defaultFill();
+    render(); persist();
+  } else if (remote && remote.at > localAt) {                     // サーバーの方が新しい
+    state = normalize(remote.data); cacheSet(uid, 'cur', { data: remote.data, at: remote.at }); render();
+  } else if (c2 && (!remote || localAt > remote.at)) { persist(); }  // 端末の方が新しい→サーバーへ
+  hideLoading(); renderAuthUI();
 }
 
 Object.assign(window, { toggleTheme, shuffleSeats, unlockAll, toggleEdit, addRow, removeRow, addCol, removeCol, openModal, closeModal,
@@ -734,8 +773,19 @@ applyTheme(document.documentElement.dataset.theme);
 const now = new Date(); $('dateInfo').textContent = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`;
 
 if (CLOUD) {
-  app = initializeApp(firebaseConfig); auth = getAuth(app); db = getFirestore(app);
-  onAuthStateChanged(auth, async u => { user = u; await loadInitial(); });
+  app = initializeApp(firebaseConfig); auth = getAuth(app);
+  db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+  let booted = false;
+  if (lastUid) {                                                  // ログイン確認を待たず、前回のデータを即表示
+    const c = cacheGet(lastUid, 'cur');
+    if (c) { state = normalize(c.data); render(); hideLoading(); booted = true; }
+  }
+  onAuthStateChanged(auth, async u => {
+    user = u; authReady = true;
+    if (u) localStorage.setItem('seat.lastUid', u.uid); else localStorage.removeItem('seat.lastUid');
+    const fc = booted && !!u && u.uid === lastUid; booted = false;
+    await loadInitial(fc);
+  });
 } else {
   loadInitial();
 }
