@@ -22,9 +22,6 @@
 </script>
 <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js">
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js">
-<link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -327,9 +324,9 @@
 </div>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+// Firebaseは重いので、画面を出したあとで読み込む（下の initFirebase）
+let initializeApp, getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail,
+    initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy;
 
 /* ============================================================
    ★ ここをあなたの Firebase プロジェクトの値に書き換えてください
@@ -423,16 +420,19 @@ const cloud = {
     const r = await getDocs(query(this.col(), orderBy('createdAt')));
     return r.docs.map(d => { const v = d.data(); return { id: d.id, name: v.name, date: v.date, data: JSON.parse(v.json) }; });
   },
-  async addLayout(name, data, date, createdAt = Date.now()) {
-    const ref = await addDoc(this.col(), { name, date, json: JSON.stringify(data), createdAt });
+  async addLayout(name, data, date, createdAt = Date.now(), id = null) {
+    const body = { name, date, json: JSON.stringify(data), createdAt };
+    if (id) { await setDoc(doc(db, 'users', user.uid, 'layouts', id), body); return { id, name, date, data }; }
+    const ref = await addDoc(this.col(), body);
     return { id: ref.id, name, date, data };
   },
   async deleteLayout(id) { await deleteDoc(doc(db, 'users', user.uid, 'layouts', id)); }
 };
 const store = () => (user ? cloud : local);
 
-let persistTimer, rev = 0, blocked = false, authReady = !CLOUD;
+let persistTimer, rev = 0, blocked = false, authReady = true;
 const lastUid = localStorage.getItem('seat.lastUid');
+authReady = !CLOUD || !lastUid;
 const ck = (uid, k) => `seat.c.${uid}.${k}`;
 const cacheGet = (uid, k) => { try { return JSON.parse(localStorage.getItem(ck(uid, k))); } catch { return null; } };
 const cacheSet = (uid, k, v) => { try { localStorage.setItem(ck(uid, k), JSON.stringify(v)); } catch {} };
@@ -612,22 +612,48 @@ function saveNames() {
 
 /* ---------- 名前をつけて保存 / 管理 ---------- */
 function openSave() { $('saveName').value = ''; openModal('saveModal'); setTimeout(() => $('saveName').focus(), 50); }
+const pendGet = uid => { try { return JSON.parse(localStorage.getItem(`seat.pending.${uid}`)) || []; } catch { return []; } };
+const pendSet = (uid, v) => { try { v.length ? localStorage.setItem(`seat.pending.${uid}`, JSON.stringify(v)) : localStorage.removeItem(`seat.pending.${uid}`); } catch {} };
+let flushing = false;
+async function flushPending() {                                   // 送信待ちを順にクラウドへ（失敗したら残して次回再送）
+  if (!user || flushing) return true;
+  flushing = true; const uid = user.uid;
+  try {
+    let q;
+    while ((q = pendGet(uid)).length) {
+      const it = q[0];
+      await cloud.addLayout(it.name, it.data, it.date, it.createdAt, it.pid);
+      pendSet(uid, pendGet(uid).filter(x => x.pid !== it.pid));
+    }
+    return true;
+  } catch (e) { console.error(e); return false; } finally { flushing = false; }
+}
+window.addEventListener('online', flushPending);
+
 async function doSave() {
   const name = $('saveName').value.trim();
   if (!name) return toast('名前を入力してください');
-  closeModal('saveModal'); toast('保存中…');                   // 画面は止めない
-  try {
-    const item = await store().addLayout(name, serialize(), new Date().toLocaleString('ja-JP'));
-    if (user) { const l = cacheGet(user.uid, 'layouts'); if (l) { l.push(item); cacheSet(user.uid, 'layouts', l); } }
-    toast('保存しました');
-  } catch (e) { console.error(e); toast('保存に失敗しました。通信を確認してください'); }
+  closeModal('saveModal');
+  const data = serialize(), date = new Date().toLocaleString('ja-JP'), createdAt = Date.now();
+  if (!user) {                                                    // 未ログイン：端末内なので一瞬
+    try { await local.addLayout(name, data, date); toast('保存しました'); } catch { toast('保存に失敗しました'); }
+    return;
+  }
+  const uid = user.uid, pid = 'p' + createdAt + Math.random().toString(36).slice(2, 6);
+  pendSet(uid, [...pendGet(uid), { pid, name, data, date, createdAt }]);   // ① 端末に確保
+  const l = cacheGet(uid, 'layouts'); if (l) { l.push({ id: pid, name, date, data }); cacheSet(uid, 'layouts', l); }
+  toast('保存しました');                                                  // ② すぐ完了表示
+  flushPending().then(ok => { if (!ok) toast('通信できないため、つながったら自動で送信します'); });  // ③ 裏で送信
 }
 async function openData() {
   openModal('dataModal');
   const uid = user ? user.uid : null, cached = uid ? cacheGet(uid, 'layouts') : null;
   if (cached) { layoutsCache = cached; renderSaved(); }          // 前回の一覧をまず表示
   else $('savedList').innerHTML = `<div class="empty-msg">${ic('spinner', 'spin')} 読み込み中...</div>`;
-  try { layoutsCache = await store().listLayouts(); if (uid) cacheSet(uid, 'layouts', layoutsCache); }
+  try {
+    layoutsCache = await store().listLayouts();
+    if (uid) { const pend = pendGet(uid), ids = new Set(pend.map(x => x.pid)); layoutsCache = [...layoutsCache.filter(x => !ids.has(x.id)), ...pend.map(x => ({ id: x.pid, name: x.name, date: x.date, data: x.data }))]; cacheSet(uid, 'layouts', layoutsCache); }
+  }
   catch (e) { console.error(e); if (!cached) layoutsCache = []; toast('最新の一覧を取得できませんでした'); }
   renderSaved();
 }
@@ -652,7 +678,8 @@ $('savedList').addEventListener('click', async e => {
   } else if (db_) {
     const l = layoutsCache.find(x => x.id === db_.dataset.del); if (!l) return;
     if (!confirm(`本当に『${l.name}』を削除しますか？\nこの操作は元に戻せません。`)) return;
-    layoutsCache = layoutsCache.filter(x => x.id !== l.id); renderSaved(); if (user) cacheSet(user.uid, 'layouts', layoutsCache);
+    layoutsCache = layoutsCache.filter(x => x.id !== l.id); renderSaved();
+    if (user) { cacheSet(user.uid, 'layouts', layoutsCache); pendSet(user.uid, pendGet(user.uid).filter(x => x.pid !== l.id)); }
     try { await store().deleteLayout(l.id); } catch (err) { console.error(err); toast('削除に失敗しました'); }
   }
 });
@@ -689,7 +716,7 @@ function setAuthMode(m) {
 }
 function openAuth() {
   if (!CLOUD) return toast('Firebaseの設定がまだです。index.html 上部の firebaseConfig を入力してください');
-  setAuthMode('login'); openModal('authModal');
+  setAuthMode('login'); openModal('authModal'); initFirebase().catch(() => {});   // 開いている間に先読み
 }
 const AUTH_MSG = {
   'auth/invalid-email': 'メールアドレスの形式が正しくありません',
@@ -710,16 +737,17 @@ async function submitAuth(e) {
   if (authMode === 'register' && pw !== $('authPass2').value) { err.textContent = '確認用パスワードが一致しません'; return; }
   const btn = $('authSubmit'); btn.disabled = true;
   try {
+    await initFirebase();
     if (authMode === 'login') await signInWithEmailAndPassword(auth, email, pw);
     else await createUserWithEmailAndPassword(auth, email, pw);
     closeModal('authModal'); $('authPass').value = ''; $('authPass2').value = '';
-  } catch (ex) { err.textContent = AUTH_MSG[ex.code] || 'エラーが発生しました（' + ex.code + '）'; }
+  } catch (ex) { err.textContent = AUTH_MSG[ex.code] || (ex.code ? 'エラーが発生しました（' + ex.code + '）' : 'Firebaseを読み込めませんでした。通信を確認してください'); }
   btn.disabled = false;
 }
 async function resetPassword() {
   const email = $('authEmail').value.trim();
   if (!email) { $('authError').textContent = '上の欄にメールアドレスを入力してください'; return; }
-  try { await sendPasswordResetEmail(auth, email); $('authError').textContent = ''; toast('再設定用のメールを送信しました'); }
+  try { await initFirebase(); await sendPasswordResetEmail(auth, email); $('authError').textContent = ''; toast('再設定用のメールを送信しました'); }
   catch (ex) { $('authError').textContent = AUTH_MSG[ex.code] || 'メールを送信できませんでした'; }
 }
 async function logout() { if (confirm('ログアウトしますか？')) await signOut(auth); }
@@ -759,7 +787,7 @@ async function loadInitial(fromCache) {
   } else if (remote && remote.at > localAt) {                     // サーバーの方が新しい
     state = normalize(remote.data); cacheSet(uid, 'cur', { data: remote.data, at: remote.at }); render();
   } else if (c2 && (!remote || localAt > remote.at)) { persist(); }  // 端末の方が新しい→サーバーへ
-  hideLoading(); renderAuthUI();
+  hideLoading(); renderAuthUI(); flushPending();
 }
 
 Object.assign(window, { toggleTheme, shuffleSeats, unlockAll, toggleEdit, addRow, removeRow, addCol, removeCol, openModal, closeModal,
@@ -772,22 +800,42 @@ hydrate();
 applyTheme(document.documentElement.dataset.theme);
 const now = new Date(); $('dateInfo').textContent = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`;
 
-if (CLOUD) {
-  app = initializeApp(firebaseConfig); auth = getAuth(app);
-  db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
-  let booted = false;
-  if (lastUid) {                                                  // ログイン確認を待たず、前回のデータを即表示
-    const c = cacheGet(lastUid, 'cur');
-    if (c) { state = normalize(c.data); render(); hideLoading(); booted = true; }
-  }
-  onAuthStateChanged(auth, async u => {
-    user = u; authReady = true;
-    if (u) localStorage.setItem('seat.lastUid', u.uid); else localStorage.removeItem('seat.lastUid');
-    const fc = booted && !!u && u.uid === lastUid; booted = false;
-    await loadInitial(fc);
-  });
-} else {
-  loadInitial();
+let booted = false, guestShown = false, fbPromise = null;
+function initFirebase() {
+  if (fbPromise) return fbPromise;
+  fbPromise = (async () => {
+    const base = 'https://www.gstatic.com/firebasejs/10.14.1/';
+    const [a, au, fs] = await Promise.all([import(base + 'firebase-app.js'), import(base + 'firebase-auth.js'), import(base + 'firebase-firestore.js')]);
+    ({ initializeApp } = a);
+    ({ getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } = au);
+    ({ initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } = fs);
+    app = initializeApp(firebaseConfig); auth = getAuth(app);
+    db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+    onAuthStateChanged(auth, async u => {
+      if (!u && !user && guestShown) { authReady = true; return; }   // 未ログインで表示済み：そのまま
+      user = u; authReady = true;
+      if (u) localStorage.setItem('seat.lastUid', u.uid); else localStorage.removeItem('seat.lastUid');
+      const fc = booted && !!u && u.uid === lastUid; booted = false;
+      await loadInitial(fc);
+    });
+  })().catch(e => { fbPromise = null; throw e; });
+  return fbPromise;
+}
+function fbFailed(e) {
+  console.error(e); toast('Firebaseを読み込めませんでした。通信を確認してください');
+  if (!guestShown && !booted) { authReady = true; guestShown = true; loadInitial(); }
+  hideLoading();
+}
+
+const cachedBoot = CLOUD && lastUid ? cacheGet(lastUid, 'cur') : null;
+if (cachedBoot) {                                  // ログイン済み：前回のデータを即表示 → 裏でFirebase
+  state = normalize(cachedBoot.data); render(); hideLoading(); booted = true;
+  initFirebase().catch(fbFailed);
+} else if (CLOUD && lastUid) {                     // ログイン済みだが控えなし：サーバーから取得
+  initFirebase().catch(fbFailed);
+} else {                                           // 未ログイン：すぐ表示。Firebaseは手が空いてから読み込む
+  guestShown = true; loadInitial();
+  if (CLOUD) (window.requestIdleCallback ? f => requestIdleCallback(f, { timeout: 4000 }) : f => setTimeout(f, 1500))(() => initFirebase().catch(() => {}));
 }
 </script>
 </body>
