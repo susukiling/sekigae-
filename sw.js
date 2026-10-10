@@ -1,7 +1,7 @@
 // 席替えるーれっと Service Worker
 // 画面本体だけをキャッシュし、データ（Firebase等）には触れない。
 // index.html を更新したら CACHE のバージョンを上げると確実に入れ替わる。
-const CACHE = 'sekigae-v2';
+const CACHE = 'sekigae-v3';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
